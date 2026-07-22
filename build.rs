@@ -61,15 +61,27 @@ fn main() {
         let cargo = env::var("CARGO").unwrap_or_else(|_| "cargo".to_string());
 
         if should_generate_notice {
-            let output_about = Command::new(&cargo)
-                .args(["about", "generate", "about.hbs"])
-                .output()
-                .expect("failed to execute cargo about. Is cargo-about installed?");
+            if has_cargo_subcommand("about") {
+                let output_about = Command::new(&cargo)
+                    .args(["about", "generate", "about.hbs"])
+                    .output()
+                    .expect("failed to execute cargo about");
 
-            if output_about.status.success() {
-                std::fs::write(notice_path, output_about.stdout).expect("failed to write NOTICE.txt");
+                if output_about.status.success() {
+                    std::fs::write(notice_path, output_about.stdout).expect("failed to write NOTICE.txt");
+                } else {
+                    panic!("cargo about failed: {}", String::from_utf8_lossy(&output_about.stderr));
+                }
+            } else if notice_path.exists() {
+                println!(
+                    "cargo:warning=cargo-about not installed; keeping the existing NOTICE.txt. \
+                     Run `cargo install cargo-about` to regenerate it."
+                );
             } else {
-                panic!("cargo about failed: {}", String::from_utf8_lossy(&output_about.stderr));
+                panic!(
+                    "cargo-about is not installed and there is no NOTICE.txt to fall back to; \
+                     install it with `cargo install cargo-about`."
+                );
             }
         }
 
@@ -172,6 +184,25 @@ fn env_flag(name: &str, default: bool) -> bool {
             matches!(normalized.as_str(), "1" | "true" | "yes" | "on")
         })
         .unwrap_or(default)
+}
+
+/// Returns `true` when a `cargo <name>` subcommand is installed, by looking for the
+/// corresponding `cargo-<name>` executable on `PATH` (how Cargo resolves external
+/// subcommands). Lets the build fall back to a committed NOTICE.txt when cargo-about
+/// is absent instead of panicking.
+fn has_cargo_subcommand(name: &str) -> bool {
+    let base = format!("cargo-{name}");
+    let candidates = if cfg!(windows) {
+        vec![format!("{base}.exe"), base]
+    } else {
+        vec![base]
+    };
+
+    let Some(path) = env::var_os("PATH") else {
+        return false;
+    };
+
+    env::split_paths(&path).any(|dir| candidates.iter().any(|candidate| dir.join(candidate).is_file()))
 }
 
 #[cfg(feature = "desktop")]
